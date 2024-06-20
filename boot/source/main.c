@@ -3,17 +3,19 @@
 //   -=-=-=-=-= Things To Add -=-=-=-=-=
 //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
-// 1. Collision, Jumping, dying
-// 2. World Reset, winning, and pausing
-// 3. Different World Blocks (falling) (spikes)
-// 4. Enemys, shooting, and Boss
-// 5. debug menu and ammo
+// 1. Collision, Jumping
+// 2. World Reset, winning, dying, and pausing
+//
 // 
+// 3. Different World Blocks (Holes) (spikes) (enemy placement)
+//
+// 
+// 4. Enemys, shooting, and Boss
+// 5. debug menu, gui, menus, and ammo
 
-// fix collision and how the Boudning cubes are stored
-// update how the world is built, ei: use only one function for the ground and top generation
 
-
+// fps settings don't work, so fix if possible to increase performance
+// as probably working at 'unlimited' fps
 
 
 #include <grrlib.h>
@@ -45,27 +47,27 @@
 
 #define GRID_WIDTH 1
 #define GRID_HEIGHT 5
-
-float playerSize = 0.5;
-
-
-#define BLOCK_W 12
-#define BLOCK_H 12
-
+#define BLOCK_W 30
+#define BLOCK_H 18
 #define TILE_SIZE 1.0f
+
+const float GRAVITY = 0.5f;            // Gravity acceleration
+const float JUMP_STRENGTH = 0.1f;     // Initial jump strength
+const float MAX_JUMP_DURATION = 0.6f;  // Maximum duration the jump button can be held
+const float JUMP_INCREASE_RATE = 0.00125f; // Rate at which jump increases per frame
+int isJumping = 0;
+
+float playerSize = 0.25;
+
+float bulletLifeTime = 0.8f;
+float bulletSpeed = 0.475f;
 
 #define PLAYER_SPEED 0.1f
 #define ENEMY_SPEED 0.01f
 #define MAX_ENEMIES 10
 
-
 int numEnemies = 0;
-
 int playColor = 5;
-#define JUMP_STRENGTH 5.0f
-
-int distanceMoved = 0;
-const float GRAVITY = 0.0f; // Adjust as needed for your game physics
 
 typedef struct {
     float x;
@@ -76,6 +78,7 @@ typedef struct {
     float depth;
 } BoundingBox;
 
+
 #define MAX_CUBES 100
 
 BoundingBox cubes[MAX_CUBES];
@@ -83,83 +86,22 @@ int numCubes = 0; // Number of cubes currently in the game
 
 
 
-// 0-4 = flat
-// This Ground Layer
-int world[7];
+int distanceMoved = 0;
+int world[7]; //-=-=-=-=-=-=-=-=-==--=-=-
+int TopBlocks[7]; //-=-=-=-=-=-=-=-=-==--=-=-
+int worldDistance[7]; //-=-=-=-=-=-=-=-=-==--=-=-
 
-// The wall layer
-int TopBlocks[7];
-
-// Distance from origion
-// Leave this empty
-int worldDistance[7];
-
-// The top layer
 typedef struct {
     int matrix[BLOCK_H][BLOCK_W];
 } Blocks;
 
-Blocks topLayer[7];
+Blocks topLayer[7]; //-=-=-=-=-=-=-=-=-==--=-=-
 
-// This the bottom layer
 typedef struct {
     int matrix[BLOCK_H][BLOCK_W];
 } Block;
-Block groundLayer[7];
 
-void GenerateGroundLayer(int index) {
-    for (int row = 0; row < BLOCK_H; row++) {
-        for (int col = 0; col < BLOCK_W; col++) {
-            groundLayer[index].matrix[row][col] = ((row + col) % 2 == 0) ? 3 : 2;
-        }
-    }
-}
-
-void GenerateTopLayer(int index) {
-    // Clear previous top layer data
-    for (int row = 0; row < BLOCK_H; row++) {
-        for (int col = 0; col < BLOCK_W; col++) {
-            topLayer[index].matrix[row][col] = 0;
-        }
-    }
-
-    // Generate a set number of cubes (e.g., 5) randomly placed
-    int numCubesToGenerate = 5;
-    for (int i = 0; i < numCubesToGenerate; i++) {
-        // Create and store BoundingBox
-        if (numCubes < MAX_CUBES) {
-
-            int randRow = rand() % BLOCK_H;
-            int randCol = rand() % BLOCK_W;
-            topLayer[index].matrix[randRow][randCol] = 1; // Place a cube
-
-            cubes[numCubes++] = (BoundingBox){
-                .x = worldDistance[index] + randRow * TILE_SIZE,
-                .y = TILE_SIZE, // 1 unit above ground layer
-                .z = -randCol * TILE_SIZE,
-                .width = TILE_SIZE,
-                .height = TILE_SIZE,
-                .depth = TILE_SIZE
-            };
-        }
-    }
-}
-
-
-void GenerateWorld() {
-    for (int i = 0; i < 7; i++) {
-        GenerateGroundLayer(i);
-        GenerateTopLayer(i);
-    }
-}
-
-
-
-
-
-
-
-
+Block groundLayer[7]; //-=-=-=-=-=-=-=-=-==--=-=-
 
 u32 colors[] = {
     GRRLIB_BLACK, GRRLIB_WHITE, GRRLIB_GREEN, GRRLIB_LIME,  GRRLIB_SILVER, GRRLIB_RED
@@ -169,6 +111,11 @@ u32 colors[] = {
 // Update the updateWorldGrid function to handle the new world size
 void updateWorldGrid() {
     float baseX = 0.0f; // Adjust base position as needed
+
+    numCubes = 0;
+    for (int i = 0; i < MAX_CUBES; i++) {
+        cubes[i] = (BoundingBox){ 0 }; // Set all fields to zero or defaults
+    }
 
     for (int i = 0; i < 7; i++) {
         for (int col = 0; col < BLOCK_W; col++) {
@@ -180,12 +127,11 @@ void updateWorldGrid() {
                 float groundWorldZ = -col * TILE_SIZE;
                 GRRLIB_ObjectViewBegin();
                 GRRLIB_ObjectViewRotate(0, 0, 0);
-                GRRLIB_ObjectViewTrans(groundWorldX, 0, groundWorldZ);
+                GRRLIB_ObjectViewTrans(groundWorldX, 0.5 * (1- playerSize), groundWorldZ);
                 GRRLIB_ObjectViewEnd();
                 GRRLIB_DrawCube(TILE_SIZE, TILE_SIZE, groundColor);
 
                 // Render top layer block (1 unit above ground layer)
-                // Corrected rendering for top layer block (1 unit above ground layer)
                 int topTileType = topLayer[i].matrix[row][col];
                 if (topTileType != 0) {
                     u32 topColor = colors[topTileType];
@@ -193,17 +139,25 @@ void updateWorldGrid() {
                     float topWorldZ = -col * TILE_SIZE; // Keep it at the same Z level as ground layer
                     float topWorldY = TILE_SIZE; // 1 unit above ground layer
 
-                    // Translate to correct position
+                    // This holds coordinates for collision
+                    cubes[numCubes++] = (BoundingBox){
+                   .x = topWorldX,
+                   .y = topWorldY,
+                   .z = topWorldZ,
+                   .width = TILE_SIZE,
+                   .height = TILE_SIZE,
+                   .depth = TILE_SIZE,
+                    };
+
                     GRRLIB_ObjectViewBegin();
                     GRRLIB_ObjectViewRotate(0, 0, 0);
-                    GRRLIB_ObjectViewTrans(topWorldX, topWorldY, topWorldZ);
+                    GRRLIB_ObjectViewTrans(topWorldX, topWorldY + 0.5 * (1 - playerSize), topWorldZ);
                     GRRLIB_ObjectViewEnd();
                     GRRLIB_DrawCube(TILE_SIZE, 1, topColor);
 
-                    // Translate to correct position
                     GRRLIB_ObjectViewBegin();
                     GRRLIB_ObjectViewRotate(0, 0, 0);
-                    GRRLIB_ObjectViewTrans(topWorldX, topWorldY, topWorldZ);
+                    GRRLIB_ObjectViewTrans(topWorldX, topWorldY + 0.5 * (1 - playerSize), topWorldZ);
                     GRRLIB_ObjectViewEnd();
                     GRRLIB_DrawCube(TILE_SIZE + 0.01, 0, 0x00000080);
                 }
@@ -211,6 +165,7 @@ void updateWorldGrid() {
         }
     }
 }
+
 
 
 
@@ -227,12 +182,17 @@ void fillWorldDistance()
     worldDistance[6] = BLOCK_H * 5;
 }
 
-void generateNewBlock(int newBlockType) {
+// (1) = flat
+// (2) = few bumps
+// (3) = few holes
+// (4) = bumps and holes
+
+void GenerateNewBlock(int index, int newBlockType) {
 
     // Clear previous top layer data
     for (int row = 0; row < BLOCK_H; row++) {
         for (int col = 0; col < BLOCK_W; col++) {
-            topLayer[6].matrix[row][col] = 0;
+            topLayer[index].matrix[row][col] = 0;
         }
     }
 
@@ -242,7 +202,7 @@ void generateNewBlock(int newBlockType) {
         for (int row = 0; row < BLOCK_H; row++) {
             for (int col = 0; col < BLOCK_W; col++) {
                 // Example: Assigning values to the new block (adjust as per your game logic)
-                groundLayer[6].matrix[row][col] = ((row + col) % 2 == 0) ? 3 : 2;
+                groundLayer[index].matrix[row][col] = ((row + col) % 2 == 0) ? 3 : 2;
             }
         }
         break;
@@ -251,7 +211,7 @@ void generateNewBlock(int newBlockType) {
         for (int row = 0; row < BLOCK_H; row++) {
             for (int col = 0; col < BLOCK_W; col++) {
                 // Example: Assigning different values for block type 2
-                groundLayer[6].matrix[row][col] = ((row + col) % 3 == 0) ? 1 : 4;
+                groundLayer[index].matrix[row][col] = ((row + col) % 3 == 0) ? 1 : 4;
             }
         }
         break;
@@ -260,25 +220,17 @@ void generateNewBlock(int newBlockType) {
         // Handle default case or error condition
         break;
     }
-}
 
-void generateNewTop(int newBlockType) {
+    //-=-===-=-=-=-=-=-==-=-==--=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+    //-=-===-=-=-=-=-=-==-=-==--=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+    //-=-===-=-=-=-=-=-==-=-==--=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+
     int numCubesToGenerate = 5;
 
     // Clear previous top layer data
     for (int row = 0; row < BLOCK_H; row++) {
         for (int col = 0; col < BLOCK_W; col++) {
-            topLayer[6].matrix[row][col] = 0;
-        }
-    }
-
-    // Remove old bounding boxes related to this layer
-    for (int i = 0; i < numCubes; ) {
-        if (cubes[i].x >= worldDistance[6] && cubes[i].x < worldDistance[6] + BLOCK_H * TILE_SIZE) {
-            cubes[i] = cubes[--numCubes]; // Remove cube by replacing it with the last one
-        }
-        else {
-            i++;
+            topLayer[index].matrix[row][col] = 0;
         }
     }
 
@@ -286,83 +238,50 @@ void generateNewTop(int newBlockType) {
     if (numCubes < MAX_CUBES) {
         switch (newBlockType) {
         case 1:
-            // Generate a set number of cubes (e.g., 5) randomly placed
             for (int i = 0; i < numCubesToGenerate; i++) {
                 int randRow = rand() % BLOCK_H;
                 int randCol = rand() % BLOCK_W;
-                topLayer[6].matrix[randRow][randCol] = 1; // Place a cube
-
-                cubes[numCubes++] = (BoundingBox){
-                    .x = worldDistance[6] + randRow * TILE_SIZE,
-                    .y = TILE_SIZE, // 1 unit above ground layer
-                    .z = -randCol * TILE_SIZE,
-                    .width = TILE_SIZE,
-                    .height = TILE_SIZE,
-                    .depth = TILE_SIZE
-                };
+                topLayer[index].matrix[randRow][randCol] = 1; // Place a cube
             }
             break;
         case 2:
-            // Generate a set number of cubes (e.g., 8) randomly placed
             for (int i = 0; i < numCubesToGenerate + 3; i++) {
                 int randRow = rand() % BLOCK_H;
                 int randCol = rand() % BLOCK_W;
-                topLayer[6].matrix[randRow][randCol] = 4; // Place a cube
-
-                cubes[numCubes++] = (BoundingBox){
-                    .x = worldDistance[6] + randRow * TILE_SIZE,
-                    .y = TILE_SIZE, // 1 unit above ground layer
-                    .z = -randCol * TILE_SIZE,
-                    .width = TILE_SIZE,
-                    .height = TILE_SIZE,
-                    .depth = TILE_SIZE
-                };
+                topLayer[index].matrix[randRow][randCol] = 4; // Place a cube
             }
             break;
         default:
-            // Handle default case or error condition
             break;
         }
     }
 }
 
+void GenerateWorld() {
 
-
+    for (int i = 0; i < 7; i++) {
+        int newGroundBlock = rand() % 3 + 1; // Random number between 1 and 2
+        GenerateNewBlock(i, newGroundBlock);
+    }
+}
 
 
 void shiftWorldArray() {
-    int newGroundBlock = rand() % 2 + 1; // Random number between 1 and 2
+    int newGroundBlock = rand() % 2 + 1;
 
     // Shift the world array to the left
     for (int i = 0; i < 6; i++) {
-        world[i] = world[i + 1]; // Shift blocks one place ahead
+        world[i] = world[i + 1];
         memcpy(&groundLayer[i], &groundLayer[i + 1], sizeof(Block));
         memcpy(&topLayer[i], &topLayer[i + 1], sizeof(Blocks));
-        worldDistance[i] = worldDistance[i + 1]; // Shift distances one place ahead
-    }
-
-    // Clear old bounding boxes related to the shifted out layer
-    for (int i = 0; i < numCubes; ) {
-        if (cubes[i].x >= worldDistance[0] && cubes[i].x < worldDistance[0] + BLOCK_H * TILE_SIZE) {
-            cubes[i] = cubes[--numCubes]; // Remove cube by replacing it with the last one
-        }
-        else {
-            i++;
-        }
+        worldDistance[i] = worldDistance[i + 1];
     }
 
     // Set the last element to the new block type
     world[6] = newGroundBlock;
-    generateNewBlock(newGroundBlock); // Update groundLayer[6] with the new block type
-    generateNewTop(newGroundBlock);
-    worldDistance[6] += BLOCK_H; // Update the distance of the last block
+    GenerateNewBlock(6, newGroundBlock);
+    worldDistance[6] += BLOCK_H;
 }
-
-
-
-
-
-
 
 
 
@@ -372,8 +291,8 @@ void shiftWorldArray() {
 
 #define MAX_BULLETS 10
 typedef struct {
-    float x, y;
-    float vx, vy;
+    float x, y, z;
+    float vx, vy, vz;
     int active;
     float lifetime; // New field for bullet lifetime
 } Bullet;
@@ -386,8 +305,8 @@ typedef struct {
     int width, height, maxHP, curHP;
     int invincible; // New field to indicate invincibility
     float invincibleTime; // New field to keep track of invincibility duration
+    float jumpTime; // Field to keep track of jump button held time
 } Player;
-
 
 typedef struct {
     float x, y;
@@ -446,12 +365,14 @@ void renderBullets() {
         if (bullets[i].active) {
             GRRLIB_ObjectViewBegin();
             GRRLIB_ObjectViewRotate(0, 0, 0);
-            GRRLIB_ObjectViewTrans(bullets[i].x, -bullets[i].y, 0);
+            // Adjusting the z-coordinate for bullet rendering in 3D
+            GRRLIB_ObjectViewTrans(bullets[i].x, bullets[i].y, bullets[i].z);
             GRRLIB_ObjectViewEnd();
-            GRRLIB_DrawCube(0.325f, 0, 0xFF0000FF); // Render bullet as a small purple cube
+            GRRLIB_DrawCube(playerSize, 1, 0xFF0000FF); // Render bullet as a small purple cube
         }
     }
 }
+
 
 //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
@@ -493,24 +414,25 @@ void launchBullet(Player* player) {
             bullets[i].active = 1;
             bullets[i].x = player->x;
             bullets[i].y = player->y;
-            bullets[i].lifetime = 0.25f; // Set initial lifetime to 0.25 seconds
+            bullets[i].z = player->z; // Set the z-coordinate
+            bullets[i].lifetime = bulletLifeTime; // Set initial lifetime to 0.25 seconds
 
             switch (player->facing) {
             case UP:
-                bullets[i].vx = 0;
-                bullets[i].vy = -0.2f;
+                bullets[i].vx = player->vx * 0.75f;
+                bullets[i].vz = bulletSpeed; // Move in the z direction
                 break;
             case DOWN:
-                bullets[i].vx = 0;
-                bullets[i].vy = 0.2f;
+                bullets[i].vx = player->vx * 0.75f;
+                bullets[i].vz = -bulletSpeed;
                 break;
             case RIGHT:
-                bullets[i].vx = 0.2f;
-                bullets[i].vy = 0;
+                bullets[i].vx = -bulletSpeed;
+                bullets[i].vz = player->vz * 0.75f;
                 break;
             case LEFT:
-                bullets[i].vx = -0.2f;
-                bullets[i].vy = 0;
+                bullets[i].vx = bulletSpeed;
+                bullets[i].vz = player->vz * 0.75f;
                 break;
             }
             break;
@@ -518,20 +440,62 @@ void launchBullet(Player* player) {
     }
 }
 
+void updateBullets(float deltaTime) {
+    for (int i = 0; i < MAX_BULLETS; i++) {
+        if (bullets[i].active) {
+            bullets[i].x += bullets[i].vx * deltaTime * 60;
+            bullets[i].y += bullets[i].vy * deltaTime * 60;
+            bullets[i].z += bullets[i].vz * deltaTime * 60; // Update z-coordinate
+
+            bullets[i].lifetime -= deltaTime; // Decrement lifetime
+
+            // Deactivate bullet if it goes out of bounds or its lifetime expires
+            if (bullets[i].lifetime <= 0) {
+                bullets[i].active = 0;
+            }
+        }
+    }
+    handleBulletEnemyCollisions();
+}
+
+
 //=-==-=-==-=-
 
 void resetGame(Player* player) {
+
+    // Player player = { 0, 1, -(BLOCK_W / 2), 0, 0, 0, RIGHT, TILE_SIZE, TILE_SIZE, 3, 3, 0, 0.0f, 0.0f };
+
     // Reset player position and health
-    player->x = GRID_WIDTH / 2;
-    player->y = GRID_HEIGHT / 2;
+    player->x = 0;
+    player->y = 1;
+    player->z = -(BLOCK_W / 2);
     player->vx = 0;
     player->vy = 0;
+    player->vz = 0;
     player->curHP = player->maxHP;
     player->invincible = 0;
     player->invincibleTime = 0.0f;
 
-    // Reset the enemies
-    initEnemies();
+    distanceMoved = 0;
+
+    // Clear previous top layer data
+    for (int i = 0; i < 7; i++)
+    {
+        world[i] = 0;
+        worldDistance[i] = 0;
+
+        for (int row = 0; row < BLOCK_H; row++) {
+            for (int col = 0; col < BLOCK_W; col++) {
+                topLayer[i].matrix[row][col] = 0;
+                groundLayer[i].matrix[row][col] = 0;
+
+                
+            }
+        }
+    }
+
+    fillWorldDistance();
+    GenerateWorld();
 }
 
 //=-==-=-==-=-
@@ -551,41 +515,62 @@ int checkCollision(Player* player, float new_x, float new_y, float new_z) {
     return 0; // No collision
 }
 
+int checkGroundCollision(Player* player, float new_x, float new_y, float new_z) {
+    if (!isJumping && new_z >= -BLOCK_W + 0.25 && new_z <= 0.25 && new_x > worldDistance[0] - 1 && new_y >= 0.0f && new_y <= 1.025f) {
+        return 1;
+    }
+    else {
+        return 0;
+    }
+}
 
 
-void updatePlayer(Player* player, int faceDirection, float deltaTime) {
-    if (player->curHP == 0) {
-        playColor = 2;
-        resetGame(player); // Reset the game when player health reaches zero
+void updatePlayer(Player* player, int faceDirection, float deltaTime, u32 held) {
+    // Apply gravity if not jumping or falling
+    if (!(held & WPAD_BUTTON_B) || player->jumpTime >= MAX_JUMP_DURATION) {
+        player->vy -= GRAVITY * deltaTime;
+        isJumping = 0; // Not jumping anymore
     }
 
-    if (player->invincible) {
-        player->invincibleTime -= deltaTime;
-        playColor = 4;
-        if (player->invincibleTime <= 0) {
-            player->invincible = 0; // turns it to false
-            playColor = 2;
-        }
-    }
-
-    // Apply gravity to the player's vertical velocity
-    player->vy -= GRAVITY * deltaTime;
+    
 
     // Calculate potential new position
     float new_x = player->x + player->vx;
     float new_y = player->y + player->vy;
     float new_z = player->z + player->vz;
 
-    // Check vertical collision
-    if (!checkCollision(player, player->x, new_y, player->z)) {
-        player->y = new_y;
+    
+
+    // Check for ground collision
+    if (checkGroundCollision(player, new_x, new_y, new_z)) {
+        player->y = 1;  // Ground level
+        player->vy = 0; // Stop vertical velocity
+        playColor = 5;
+        isJumping = 0; // Not jumping anymore
     }
     else {
-        player->vy = 0;
-        player->y = round(player->y); // Round to nearest whole number
+        player->y = new_y; // Update vertical position
+        playColor = 0;
     }
 
-    // Check horizontal collision
+    // Handle jumping mechanics
+    if (held & WPAD_BUTTON_B && player->vy == 0) {
+        player->vy = JUMP_STRENGTH; // Initial jump strength
+        player->jumpTime = 0.0f; // Reset jump time
+        isJumping = 1; // Set jumping flag
+    }
+    if (held & WPAD_BUTTON_B && player->jumpTime < MAX_JUMP_DURATION) {
+        player->jumpTime += deltaTime;
+        player->vy += JUMP_INCREASE_RATE; // Increase jump height
+        isJumping = 1; // Set jumping flag
+    }
+
+    
+
+
+
+
+    // Check for horizontal collision
     if (!checkCollision(player, new_x, player->y, player->z)) {
         player->x = new_x;
     }
@@ -594,7 +579,7 @@ void updatePlayer(Player* player, int faceDirection, float deltaTime) {
         player->x = round(player->x); // Round to nearest whole number
     }
 
-    // Check z-axis collision
+    // Check for z-axis collision
     if (!checkCollision(player, player->x, player->y, new_z)) {
         player->z = new_z;
     }
@@ -604,7 +589,16 @@ void updatePlayer(Player* player, int faceDirection, float deltaTime) {
     }
 
     player->facing = faceDirection;
+
+    if (player->y < -10)
+    {
+        resetGame(player);
+    }
 }
+
+
+
+
 
 
 void updatePlayerFace(Player* player) {
@@ -613,48 +607,33 @@ void updatePlayerFace(Player* player) {
 
     // UP=0, DOWN=1, RIGHT=2, LEFT=3
     if (player->facing == UP) {
-        faceZ += 0.25;
+        faceZ += 0.55 * playerSize;
     }
     else if (player->facing == DOWN) {
-        faceZ -= 0.25;
+        faceZ -= 0.55 * playerSize;
     }
     else if (player->facing == RIGHT) {
-        faceX -= 0.25;
+        faceX -= 0.55 * playerSize;
     }
     else if (player->facing == LEFT) {
-        faceX += 0.25;
+        faceX += 0.55 * playerSize;
     }
 
     GRRLIB_ObjectViewBegin();
     GRRLIB_ObjectViewRotate(0, 0, 0);
-    GRRLIB_ObjectViewTrans(faceX, 1, faceZ);
+    GRRLIB_ObjectViewTrans(faceX, player->y, faceZ);
     GRRLIB_ObjectViewEnd();
-    GRRLIB_DrawCube(playerSize * 0.5f, 1, 0xFFB6C1FF); // 0x800080FF  FFB6C1
+    GRRLIB_DrawCube(playerSize * 0.45f, 1, 0xFFB6C1FF); // 0x800080FF  FFB6C1
 
     GRRLIB_ObjectViewBegin();
     GRRLIB_ObjectViewRotate(0, 0, 0);
-    GRRLIB_ObjectViewTrans(faceX, 1, faceZ);
+    GRRLIB_ObjectViewTrans(faceX, player->y, faceZ);
     GRRLIB_ObjectViewEnd();
-    GRRLIB_DrawCube(playerSize * 0.5f + 0.01f, 0, 0x00000080); // 0x800080FF  FFB6C1
+    GRRLIB_DrawCube(playerSize * 0.45f, 0, 0x00000080); // 0x800080FF  FFB6C1
 }
 
-void updateBullets(float deltaTime) {
-    for (int i = 0; i < MAX_BULLETS; i++) {
-        if (bullets[i].active) {
-            bullets[i].x += bullets[i].vx * deltaTime * 60;
-            bullets[i].y += bullets[i].vy * deltaTime * 60;
 
-            bullets[i].lifetime -= deltaTime; // Decrement lifetime
 
-            // Deactivate bullet if it goes out of bounds or its lifetime expires
-            if (bullets[i].x < 0 || bullets[i].x >= GRID_WIDTH || bullets[i].y < 0 || bullets[i].y >= GRID_HEIGHT ||
-                bullets[i].lifetime <= 0) {
-                bullets[i].active = 0;
-            }
-        }
-    }
-    handleBulletEnemyCollisions();
-}
 
 void updateEnemies(Player* player, float deltaTime) {
    
@@ -668,19 +647,18 @@ int main(void) {
     srand(time(NULL)); // Initialize random number generator
     u64 startTick = gettime();
 
-    fillWorldDistance();
-
     float camZ = 0.0f;
     GRRLIB_Init();
     WPAD_Init();
     GRRLIB_Settings.antialias = true;
 
-    Player player = { 0, 1, -(BLOCK_W / 2), 0, 0, 0, RIGHT, TILE_SIZE, TILE_SIZE, 3, 3, 0, 0.0f };
+    Player player = { 0, 1, -(BLOCK_W / 2), 0, 0, 0, RIGHT, TILE_SIZE, TILE_SIZE, 3, 3, 0, 0.0f, 0.0f };
     initEnemies();
     initBullets(); // Initialize bullets
 
     int faceDirection = UP;
 
+    fillWorldDistance();
     GenerateWorld();
 
     while (1) {
@@ -721,8 +699,17 @@ int main(void) {
             launchBullet(&player); // Launch bullet when A is pressed
         }
 
+        float deltaTime = 1.0f / TARGET_FPS;
+
         // Handle jumping
-        if (pressed & WPAD_BUTTON_B && player.vy == 0) player.vy = -JUMP_STRENGTH; // Jump only if on the ground
+        if (pressed & WPAD_BUTTON_B && player.vy == 0) {
+            player.vy = JUMP_STRENGTH; // Initial jump strength
+            player.jumpTime = 0.0f; // Reset jump time
+        }
+        if (held & WPAD_BUTTON_B && player.jumpTime < MAX_JUMP_DURATION) {
+            player.jumpTime += deltaTime;
+            player.vy += JUMP_INCREASE_RATE; // Increase jump height
+        }
 
         GRRLIB_SetBackgroundColour(0x00, 0x00, 0xFF, 0xFF);  // 0x0000FFFF
         GRRLIB_3dMode(0.1, 1000, 45, 0, 1);
@@ -736,27 +723,28 @@ int main(void) {
         checkPlayerPosition(&player); // Check player position and shift world array if needed
         updateWorldGrid();
 
-        float deltaTime = 1.0f / 60.0f;
-        updatePlayer(&player, faceDirection, deltaTime);
+        updateBullets(deltaTime); // Update bullets
+        updatePlayer(&player, faceDirection, deltaTime, held);
         updatePlayerFace(&player);
         updateEnemies(&player, deltaTime);
-        updateBullets(deltaTime); // Update bullets
+        
 
         GRRLIB_Camera3dSettings(
-            player.x - 8, player.y + camZ, player.z,
+            player.x - 8, player.y + camZ, player.z,  // Adjusted for player's position and some offset
             0, 1, 0,
             player.x, player.y, player.z
         );
 
+
         GRRLIB_ObjectViewBegin();
         GRRLIB_ObjectViewRotate(0, 0, 0);
-        GRRLIB_ObjectViewTrans(player.x, 1, player.z);
+        GRRLIB_ObjectViewTrans(player.x, player.y, player.z);
         GRRLIB_ObjectViewEnd();
         GRRLIB_DrawCube(playerSize, 1, colors[playColor]);
 
         GRRLIB_ObjectViewBegin();
         GRRLIB_ObjectViewRotate(0, 0, 0);
-        GRRLIB_ObjectViewTrans(player.x, 1, player.z);
+        GRRLIB_ObjectViewTrans(player.x, player.y, player.z);
         GRRLIB_ObjectViewEnd();
         GRRLIB_DrawCube(playerSize + 0.01, 0, 0x00000080);
 
