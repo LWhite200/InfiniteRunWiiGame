@@ -36,19 +36,19 @@
 #define RIGHT 2
 #define LEFT 3
 
-#define GRRLIB_BLACK   0x00000080
+#define GRRLIB_BLACK   0x000000FF
 #define GRRLIB_WHITE   0xFFFFFFFF
 #define GRRLIB_GREEN   0x008000FF
 #define GRRLIB_LIME    0x00FF00FF
 #define GRRLIB_SILVER  0xC0C0C0FF
 #define GRRLIB_RED     0xFF0000FF
 
-#define numBlocks 7
-#define numObs 40
+#define numBlocks 5
+#define numObs 28
 #define GRID_WIDTH 1
 #define GRID_HEIGHT 5
-#define BLOCK_W 16
-#define BLOCK_H 16
+#define BLOCK_W 38 // the z position
+#define BLOCK_H 18
 #define TILE_SIZE 1.0f
 
 const float GRAVITY = 0.5f;            // Gravity acceleration
@@ -62,13 +62,14 @@ float playerSize = 0.25;
 float bulletLifeTime = 0.8f;
 float bulletSpeed = 0.475f;
 
-#define PLAYER_SPEED 0.1f
+#define PLAYER_SPEED 0.075f
 #define ENEMY_SPEED 0.01f
 #define MAX_ENEMIES 10
 
 int numEnemies = 0;
 int playColor = 5;
 
+// cubes
 typedef struct {
     float x;
     float y;
@@ -76,11 +77,28 @@ typedef struct {
     int index;
 } BoundingBox;
 
-// This holds the top layers
 typedef struct {
     BoundingBox matrix[BLOCK_H][BLOCK_W];
 } TopBlock;
 TopBlock topBlock[numBlocks];
+
+
+// holes
+typedef struct {
+    float x;
+    float y;
+    float z;
+    int index;
+} holeObj;
+
+typedef struct {
+    holeObj matrix[BLOCK_H][BLOCK_W];
+} HoleBlock;
+HoleBlock holeBlock[numBlocks];
+
+
+
+
 
 int distanceMoved = 0;
 int worldDistance[numBlocks]; //-=-=-=-=-=-=-=-=-==--=-=-
@@ -100,19 +118,22 @@ void updateWorldGrid() {
 
     // Render ground layers
     for (int i = 0; i < numBlocks; i++) {
-        for (int col = 0; col < BLOCK_W; col++) {
-            for (int row = 0; row < BLOCK_H; row++) {
-                int groundTileType = groundLayer[i].matrix[row][col];
+        for (int col = 0; col < BLOCK_H; col++) {
+            for (int row = 0; row < BLOCK_W; row++) {
+                int groundTileType = groundLayer[i].matrix[col][row];
                 u32 groundColor = colors[groundTileType];
-                float groundWorldX = worldDistance[i] + row;
-                float groundWorldZ = -col * TILE_SIZE;
+                float groundWorldX = worldDistance[i] + col;
+                float groundWorldZ = -row * TILE_SIZE;
 
-                // Render ground cubes
-                GRRLIB_ObjectViewBegin();
-                GRRLIB_ObjectViewRotate(0, 0, 0);
-                GRRLIB_ObjectViewTrans(groundWorldX, 0.5 * (1 - playerSize), groundWorldZ);
-                GRRLIB_ObjectViewEnd();
-                GRRLIB_DrawCube(TILE_SIZE, TILE_SIZE, groundColor);
+                if (groundTileType != 0)
+                {
+                    // Render ground cubes
+                    GRRLIB_ObjectViewBegin();
+                    GRRLIB_ObjectViewRotate(0, 0, 0);
+                    GRRLIB_ObjectViewTrans(groundWorldX, 0.5 * (1 - playerSize), groundWorldZ);
+                    GRRLIB_ObjectViewEnd();
+                    GRRLIB_DrawCube(TILE_SIZE, TILE_SIZE, groundColor);
+                }
             }
         }
     }
@@ -152,7 +173,7 @@ void fillWorldDistance()
 }
 
 void addNewTop(int index, int x, int z) {
-    topBlock[index].matrix[z][x] = (BoundingBox){
+    topBlock[index].matrix[x][z] = (BoundingBox){
         .x = worldDistance[index] + x, // Corrected position calculation
         .y = 1,
         .z = -z,
@@ -160,28 +181,239 @@ void addNewTop(int index, int x, int z) {
     };
 }
 
-void GenerateNewBlock(int index) {
-    int newGroundBlock = rand() % 2 + 1;
+void addNewHole(int index, int x, int z) {
+    holeBlock[index].matrix[x][z] = (holeObj){
+        .x = worldDistance[index] + x, // Corrected position calculation
+        .y = 0,
+        .z = -z,
+        .index = index,
+    };
+}
 
-    // Generate ground layer
-    for (int row = 0; row < BLOCK_H; row++) {
-        for (int col = 0; col < BLOCK_W; col++) {
-            groundLayer[index].matrix[row][col] = ((row + col) % 3 == 0) ? 1 : 4;
+// (1) = flat
+// (2) = 2x2 and 3x3 Top
+// (3) = randomTop
+// (4) = holes
+// (5) = 2x2 + holes
+// (6) = holes + randomTop
+// (7) = water level
+// (8) = boss
+void genFlatFloor(int index)
+{
+    for (int col = 0; col < BLOCK_H; col++) {
+        for (int row = 0; row < BLOCK_W; row++) {
+            groundLayer[index].matrix[col][row] = ((col + row) % 3 == 0) ? 1 : 4;
         }
     }
+}
 
+void gen2x2(int index) {
+    int placedObstacles = 0;
+    bool occupied[BLOCK_H][BLOCK_W] = { false };
+
+    while (placedObstacles < numObs)
+    {
+        int threeOrTwo = rand() % 3 + 2; 
+        int randRow = rand() % BLOCK_W;
+        int randCol = rand() % BLOCK_H;
+
+        if (randRow >= 1 && randRow < BLOCK_W - 1 && randCol >= 1 && randCol < BLOCK_H - 1 && !occupied[randCol][randRow])
+        {
+            int clumpSize = (threeOrTwo == 2) ? 2 : 3;
+
+            if (clumpSize == 3) {
+                occupied[randCol][randRow] = true;
+            }
+
+            for (int i = -1; i <= clumpSize - 2; ++i)
+            {
+                for (int j = -1; j <= clumpSize - 2; ++j)
+                {
+                    if (!occupied[randCol + i][randRow + j] && placedObstacles < numObs)
+                    {
+                        addNewTop(index, randCol + i, randRow + j);
+                        occupied[randCol + i][randRow + j] = true;
+                        placedObstacles++;
+                    }
+                }
+            }
+        }
+    }
+}
+
+void genRandTop(int index)
+{
     bool occupied[BLOCK_H][BLOCK_W] = { false };
     int placedObstacles = 0;
     while (placedObstacles < numObs) {
-        int randRow = rand() % BLOCK_H;
-        int randCol = rand() % BLOCK_W;
-        if (!occupied[randRow][randCol]) {
-            occupied[randRow][randCol] = true;
+
+        // why this crash???
+        int randRow = rand() % BLOCK_W;
+        int randCol = rand() % BLOCK_H;
+        // why this crash???
+
+        if (!occupied[randCol][randRow]) {
+            occupied[randCol][randRow] = true;
             addNewTop(index, randCol, randRow); // Swap randRow and randCol for correct orientation
             placedObstacles++;
         }
     }
 }
+
+void genHoleFloor(int index)
+{
+    // generates the ground layer
+    for (int row = 0; row < BLOCK_H; row++) {
+        for (int col = 0; col < BLOCK_W; col++) {
+            groundLayer[index].matrix[row][col] = ((row + col) % 2 == 0) ? 3 : 2;
+        }
+    }
+
+    //replaces parts with holes
+    int placedObstacles = 0;
+    bool occupied[BLOCK_H][BLOCK_W] = { false };
+
+    while (placedObstacles < numObs)
+    {
+        int threeOrTwo = rand() % 3 + 2;
+        int randRow = rand() % BLOCK_W;
+        int randCol = rand() % BLOCK_H;
+
+        if (randRow >= 1 && randRow < BLOCK_W - 1 && randCol >= 1 && randCol < BLOCK_H - 1 && !occupied[randCol][randRow])
+        {
+            int clumpSize = (threeOrTwo == 2) ? 2 : 3;
+
+            // Place the hole and ensure surrounding blocks are the same color (3)
+            for (int i = -1; i <= clumpSize - 2; ++i)
+            {
+                for (int j = -1; j <= clumpSize - 2; ++j)
+                {
+                    int targetRow = randCol + i;
+                    int targetCol = randRow + j;
+
+                    if (!occupied[targetRow][targetCol] && placedObstacles < numObs)
+                    {
+                        // Place the hole
+                        addNewHole(index, targetRow, targetCol);
+                        occupied[targetRow][targetCol] = true;
+                        groundLayer[index].matrix[targetRow][targetCol] = 0;
+                        placedObstacles++;
+
+                        // Set surrounding blocks to color 3
+                        for (int ni = -1; ni <= 1; ++ni)
+                        {
+                            for (int nj = -1; nj <= 1; ++nj)
+                            {
+                                if (targetRow + ni >= 0 && targetRow + ni < BLOCK_H &&
+                                    targetCol + nj >= 0 && targetCol + nj < BLOCK_W &&
+                                    !occupied[targetRow + ni][targetCol + nj])
+                                {
+                                    groundLayer[index].matrix[targetRow + ni][targetCol + nj] = 2;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+void genLinedRoom(int index)
+{
+    // Determine orientation: 0 for horizontal (2/3 probability), 1 for vertical (1/3 probability)
+    int orientation;
+    if (rand() % 3 < 2) {
+        orientation = 1; // Horizontal orientation chosen 2/3 of the time
+    }
+    else {
+        orientation = 0; // Vertical orientation chosen 1/3 of the time
+    }
+
+    // Determine gap size between stripes (1 to 3 spaces)
+    int gapSize = rand() % (int)(0.33 * BLOCK_W) + 3;
+
+    // Generate stripes
+    for (int i = 0; i < (orientation == 0 ? BLOCK_H : BLOCK_W); i += gapSize + 1)
+    {
+        for (int j = 0; j < (orientation == 0 ? BLOCK_W : BLOCK_H); ++j)
+        {
+            // Randomly decide whether to add a block
+            if (rand() % 5 != 0) {
+                if (orientation == 0) {
+                    // Horizontal stripes
+                    addNewTop(index, i, j);
+                }
+                else {
+                    // Vertical stripes
+                    addNewTop(index, j, i);
+                }
+            }
+        }
+    }
+}
+
+
+
+
+// (1) = flat
+// (2) = 2x2 and 3x3 Top
+// (3) = randomTop
+// (4) = holes
+// (5) = 2x2 + holes
+// (6) = holes + randomTop
+// (7) = lined room (flat)
+// (8) = lined room (hole)
+//
+// The following are for a later date
+// (9) = water boat stage
+// (10) = boss
+void GenerateNewBlock(int index) {
+
+    int newGroundBlock = rand() % 7 + 2; // 2 through 8 somehow
+
+    if (newGroundBlock < 2 && newGroundBlock > 8)
+    {
+        newGroundBlock = 1;
+    }
+
+    switch (newGroundBlock) {
+    case 1:
+        genFlatFloor(index);
+        break;
+    case 2:
+        genFlatFloor(index);
+        gen2x2(index);
+        break;
+    case 3:
+        genFlatFloor(index);
+        genRandTop(index);
+        break;
+    case 4:
+        genHoleFloor(index);
+        break;
+    case 5:
+        genHoleFloor(index);
+        gen2x2(index);
+        break;
+    case 6:
+        genHoleFloor(index);
+        genRandTop(index);
+        break;
+    case 7:
+        genFlatFloor(index);
+        genLinedRoom(index);
+        break;
+    case 8:
+        genHoleFloor(index);
+        genLinedRoom(index);
+        break;
+    default:
+        // Handle default case if needed
+        break;
+    }
+}
+
 
 
 void GenerateWorld() {
@@ -195,11 +427,13 @@ void shiftWorldArray() {
     for (int i = 0; i < (numBlocks - 1); i++) {
         memcpy(&groundLayer[i], &groundLayer[i + 1], sizeof(Block));
         memcpy(&topBlock[i], &topBlock[i + 1], sizeof(TopBlock));
+        memcpy(&holeBlock[i], &holeBlock[i + 1], sizeof(HoleBlock));
         worldDistance[i] = worldDistance[i + 1];
     }
 
     memset(&groundLayer[numBlocks - 1], 0, sizeof(Block));
     memset(&topBlock[numBlocks - 1], 0, sizeof(TopBlock));
+    memset(&holeBlock[numBlocks - 1], 0, sizeof(HoleBlock));
     worldDistance[numBlocks - 1] += BLOCK_H;
 
     GenerateNewBlock(numBlocks - 1);
@@ -406,6 +640,10 @@ void resetGame(Player* player) {
                 topBlock[i].matrix[row][col].x = 0.0f;
                 topBlock[i].matrix[row][col].y = 0.0f;
                 topBlock[i].matrix[row][col].z = 0.0f;
+
+                holeBlock[i].matrix[row][col].x = 0.0f;
+                holeBlock[i].matrix[row][col].y = 0.0f;
+                holeBlock[i].matrix[row][col].z = 0.0f;
             }
         }
     }
@@ -439,12 +677,25 @@ int checkCollision(Player* player, float new_x, float new_y, float new_z) {
 
 int checkGroundCollision(Player* player, float new_x, float new_y, float new_z) {
     if (!isJumping && new_z >= -BLOCK_W + 0.25 && new_z <= 0.25 && new_x > worldDistance[0] - 1 && new_y >= 0.0f && new_y <= 1.025f) {
-        return 1;
+        for (int i = 0; i < numBlocks; i++) {
+            for (int row = 0; row < BLOCK_H; row++) {
+                for (int col = 0; col < BLOCK_W; col++) {
+                    holeObj hole = holeBlock[i].matrix[row][col];
+
+                    // Check if the player's new position intersects with the hole object
+                    if (round(new_x) == round(hole.x) && round(new_z) == round(hole.z)) {
+                        return 0; // The player is over a hole, so no collision
+                    }
+                }
+            }
+        }
+        return 1; // The player is on solid ground, so collision with the ground
     }
     else {
-        return 0;
+        return 0; // The player is either jumping or out of ground bounds
     }
 }
+
 
 
 void updatePlayer(Player* player, int faceDirection, float deltaTime, u32 held) {
@@ -512,7 +763,7 @@ void updatePlayer(Player* player, int faceDirection, float deltaTime, u32 held) 
 
     player->facing = faceDirection;
 
-    if (player->y < -10)
+    if (player->y < -30)
     {
         resetGame(player);
     }
